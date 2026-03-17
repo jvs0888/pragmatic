@@ -1,0 +1,19 @@
+[project]
+name = "pragmatic"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Yevhen Syzintsev",email = "yevhen_s@dataforest.ai"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright (>=1.58.0,<2.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)",
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

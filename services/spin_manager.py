@@ -42,7 +42,7 @@ class SpinCollector:
         self._spin_count: int = 0
         self._done: asyncio.Event = asyncio.Event()
         self._pending_spin: t.Optional[SpinRecord] = None
-        self._last_known_balance: float = STARTING_BALANCE
+        self._in_free_spins: bool = False
 
     def is_main_spin(self, params: dict) -> bool:
         return params.get("na") == ["s"] and "s" in params
@@ -84,32 +84,101 @@ class SpinCollector:
             return val[0] if val else default
 
         if na == "s" and "s" in params:
-            if self._pending_spin is not None:
-                self._flush_pending_spin()
+            tw_param: t.Optional[str] = get("tw")
+            if tw_param is None:
+                return
 
-            self._spin_count += 1
-            bet: float = float(get("c", 0)) * float(get("l", 0))
-            rmul: t.Optional[str] = params.get("rmul", [None])[0]
-            multiplier: int = sum(int(x) for x in re.split(r'[~;]', rmul)) if rmul else 0
-            fs: t.Any = get("fs")
+            fs: t.Optional[str] = get("fs")
 
-            self._pending_spin = SpinRecord(
-                spin_number=self._spin_count,
-                index=int(get("index", 0)),
-                bet=bet,
-                win=float(get("tw", 0)),
-                balance=float(get("balance", "0").replace(",", "")),
-                ntp=float(get("ntp", 0)),
-                reel_set=int(get("reel_set", 0)),
-                has_tumble="tmb" in params,
-                is_winning=float(get("tw", 0)) > 0,
-                multiplier=multiplier,
-                event="Free Spins" if fs == "1" else "",
-                free_spins=get("fsmax") if fs == "1" else "",
-                fs_win=float(get("fswin", 0)) if fs == "1" else 0.0,
-            )
+            rs_p: t.Optional[str] = get("rs_p")
+            is_cascade: bool = rs_p is not None and int(rs_p) > 0
+
+            if fs is not None:
+                if fs == "1":
+                    if self._pending_spin is not None:
+                        self._flush_pending_spin()
+
+                    self._in_free_spins = True
+                    self._spin_count += 1
+                    bet: float = float(get("c", 0)) * float(get("l", 0))
+
+                    self._pending_spin = SpinRecord(
+                        spin_number=self._spin_count,
+                        index=int(get("index", 0)),
+                        bet=bet,
+                        win=float(get("tw", 0)),
+                        balance=float(get("balance", "0").replace(",", "")),
+                        ntp=float(get("ntp", 0)),
+                        reel_set=int(get("reel_set", 0)),
+                        has_tumble="tmb" in params,
+                        is_winning=True,
+                        multiplier=0,
+                        event="Free Spins",
+                        free_spins=get("fsmax", ""),
+                        fs_win=float(get("fswin", 0)),
+                    )
+
+                    if self._spin_count >= self.spin_limit:
+                        self._done.set()
+                else:
+                    if self._pending_spin is not None:
+                        fswin: float = float(get("fswin", 0))
+                        self._pending_spin.fs_win = max(self._pending_spin.fs_win, fswin)
+                        self._pending_spin.win = max(self._pending_spin.win, float(get("tw", 0)))
+
+                        balance_str: str = get("balance", "0").replace(",", "")
+                        self._pending_spin.balance = float(balance_str)
+
+                return
+
+            if is_cascade and self._pending_spin is not None:
+                tw: float = float(get("tw", 0))
+                self._pending_spin.win = tw
+                self._pending_spin.is_winning = tw > 0
+                balance_str: str = get("balance", "0").replace(",", "")
+                self._pending_spin.balance = float(balance_str)
+
+                rmul: t.Optional[str] = params.get("rmul", [None])[0]
+                if rmul:
+                    multiplier: int = sum(int(x) for x in re.split(r'[~;]', rmul)) if rmul else 0
+                    self._pending_spin.multiplier = max(self._pending_spin.multiplier, multiplier)
+            else:
+                if self._pending_spin is not None:
+                    self._flush_pending_spin()
+
+                self._spin_count += 1
+                bet: float = float(get("c", 0)) * float(get("l", 0))
+                rmul: t.Optional[str] = params.get("rmul", [None])[0]
+                multiplier: int = sum(int(x) for x in re.split(r'[~;]', rmul)) if rmul else 0
+
+                self._pending_spin = SpinRecord(
+                    spin_number=self._spin_count,
+                    index=int(get("index", 0)),
+                    bet=bet,
+                    win=float(get("tw", 0)),
+                    balance=float(get("balance", "0").replace(",", "")),
+                    ntp=float(get("ntp", 0)),
+                    reel_set=int(get("reel_set", 0)),
+                    has_tumble="tmb" in params,
+                    is_winning=float(get("tw", 0)) > 0,
+                    multiplier=multiplier,
+                    event="",
+                    free_spins="",
+                    fs_win=0.0,
+                )
+
+                if self._spin_count >= self.spin_limit:
+                    self._done.set()
 
         elif na == "c" and self._pending_spin is not None:
+            fsend_total: t.Optional[str] = get("fsend_total")
+            if fsend_total == "1":
+                fswin_total: float = float(get("fswin_total", 0))
+                self._pending_spin.fs_win = fswin_total
+                self._pending_spin.win = fswin_total
+                self._in_free_spins = False
+                return
+
             tw: float = float(get("tw", 0))
             if tw > self._pending_spin.win:
                 self._pending_spin.win = tw
@@ -131,9 +200,6 @@ class SpinCollector:
         logger.info(
             f"[Spin {spin.spin_number}] bet={spin.bet} win={spin.win} balance={spin.balance} mul={spin.multiplier}"
         )
-
-        if self._spin_count >= self.spin_limit:
-            self._done.set()
 
     async def wait_until_done(self) -> None:
         await self._done.wait()

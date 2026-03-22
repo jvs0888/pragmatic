@@ -15,6 +15,7 @@ class PlaywrightAsync:
     def __init__(self):
         self.project_path: Path = Path(__file__).resolve().parent.parent
         self.videos_path: str = os.path.join(self.project_path, "sources", "videos")
+        self.playwright = None
         self.browser: t.Optional[Browser] = None
         self.context: t.Optional[BrowserContext] = None
         self.page: t.Optional[Page] = None
@@ -26,6 +27,8 @@ class PlaywrightAsync:
             await self.context.close()
         if self.browser:
             await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
 
     async def wait_for_selector(self, selector: str, timeout: int = 15000, save_screen: bool = False) -> ElementHandle:
         try:
@@ -41,8 +44,8 @@ class PlaywrightAsync:
             if record_video:
                 context_options["record_video_dir"] = self.videos_path
 
-            playwright = await async_playwright().start()
-            self.browser: Browser = await playwright.chromium.launch(headless=headless)
+            self.playwright = await async_playwright().start()
+            self.browser: Browser = await self.playwright.chromium.launch(headless=headless)
             self.context: BrowserContext = await self.browser.new_context(
                 **context_options,
                 viewport={"width": 1600, "height": 900}
